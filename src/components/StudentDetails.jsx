@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Camera, Upload, User, Image as ImageIcon, X } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { calculateGrade, getGradeColor } from '../utils/gradeUtils';
 
 const StudentDetails = ({ studentId }) => {
     const { students, ratings, updateStudent } = useApp();
@@ -47,9 +48,7 @@ const StudentDetails = ({ studentId }) => {
 
     const maxScore = validRatings.length;
     const percentage = maxScore > 0 ? totalScore / maxScore : 0;
-
-    // Grade: 1.0 (100%) to 6.0 (0%)
-    const calculatedGrade = (1 + (1 - percentage) * 5).toFixed(1);
+    const calculatedGrade = calculateGrade(percentage);
 
     let gradeDisplay = "N/A";
     let gradeColor = "text-gray-400";
@@ -57,16 +56,18 @@ const StudentDetails = ({ studentId }) => {
     if (validRatings.length === 0) {
         gradeDisplay = "-";
     } else if (validRatings.length < 5) {
-        // Not enough data
-        if (percentage >= 0.8) gradeDisplay = "1 - 2";
-        else if (percentage >= 0.5) gradeDisplay = "3 - 4";
-        else gradeDisplay = "5 - 6";
+        // Not enough data - show range estimation? 
+        // Or just show current calculated grade but grey?
+        // User didn't specify behavior for low data, but let's stick to showing the grade based on current data
+        // but maybe indicate it's preliminary.
+        // Previous logic showed range. Let's keep range logic adapted to new scale?
+        // Actually, with discrete steps 1,2,3... ranges are less ambiguous.
+        // Let's just show the calculated grade but grey.
+        gradeDisplay = calculatedGrade;
         gradeColor = "text-gray-500";
     } else {
         gradeDisplay = calculatedGrade;
-        if (calculatedGrade <= 2.5) gradeColor = "text-green-600";
-        else if (calculatedGrade <= 4.5) gradeColor = "text-yellow-600";
-        else gradeColor = "text-red-600";
+        gradeColor = getGradeColor(calculatedGrade);
     }
 
     return (

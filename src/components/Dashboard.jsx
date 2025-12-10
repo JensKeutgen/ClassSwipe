@@ -2,34 +2,119 @@ import React from 'react';
 import * as XLSX from 'xlsx';
 import { Users, Download, Plus, Play, ChevronRight, Save, Upload, Trash2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { calculateGrade } from '../utils/gradeUtils';
 
 const Dashboard = ({ onSelectClass }) => {
     const { classes, ratings, students, getAllData, restoreAllData, deleteClass } = useApp();
 
     const handleExport = () => {
-        if (ratings.length === 0) {
-            alert("Noch keine Bewertungen zum Exportieren!");
+        if (classes.length === 0) {
+            alert("Noch keine Klassen zum Exportieren!");
             return;
         }
 
-        // Prepare data for export
-        const exportData = ratings.map(r => {
-            const student = students.find(s => s.id === r.studentId);
-            const cls = classes.find(c => c.id === r.classId);
-            return {
-                Datum: new Date(r.date).toLocaleDateString(),
-                Zeit: new Date(r.date).toLocaleTimeString(),
-                Klasse: cls ? cls.name : 'Unbekannt',
-                Schüler: student ? student.name : 'Unbekannt',
-                Bewertung: r.note, // Good, Bad, Avg, Absent
-                Score: r.rating // 0-3
-            };
+        const wb = XLSX.utils.book_new();
+
+        classes.forEach(cls => {
+            const classStudents = students.filter(s => s.classId === cls.id);
+
+            if (classStudents.length === 0) return;
+
+            const sheetData = classStudents.map(student => {
+                const sRatings = ratings.filter(r => r.studentId === student.id).sort((a, b) => new Date(a.date) - new Date(b.date));
+                const validRatings = sRatings.filter(r => r.rating > 0);
+
+                // Grade Calculation
+                const totalScore = validRatings.reduce((acc, r) => {
+                    if (r.rating === 3) return acc + 1; // Good
+                    if (r.rating === 2) return acc + 0.5; // Avg
+                    return acc; // Bad is 0
+                }, 0);
+
+                const percentage = validRatings.length > 0 ? totalScore / validRatings.length : 0;
+                // Formula: Custom ranges via gradeUtils
+                const grade = validRatings.length > 0 ? calculateGrade(percentage) : "-";
+
+                // Name splitting attempt (Assumption: "Surname, Firstname" or "Firstname Surname")
+                // Let's assume the user enters full name. We'll try to split if comma exists, else last word is surname?
+                // Actually, standard school lists acts usually imply "Surname, Firstname".
+                // If the user pasted "Surname Nextname", we can try.
+                // Let's just output the full name in "Name" and leave "Vorname" empty if we can't be sure, 
+                // OR just separate by comma if present.
+                let nameParts = student.name.split(',');
+                let nachname = student.name;
+                let vorname = "";
+
+                if (nameParts.length > 1) {
+                    nachname = nameParts[0].trim();
+                    vorname = nameParts[1].trim();
+                } else {
+                    // Try space splitting (Last word is Surname?) - risky. 
+                    // Let's just put it all in Name if no comma, or split by space: First Last
+                    const parts = student.name.split(' ');
+                    if (parts.length > 1) {
+                        nachname = parts[parts.length - 1];
+                        vorname = parts.slice(0, parts.length - 1).join(' ');
+                    }
+                }
+
+                // Overview String
+                const overview = sRatings.map(r => {
+                    const date = new Date(r.date).toLocaleDateString();
+                    const status = r.rating === 3 ? '+' : r.rating === 2 ? 'o' : r.rating === 1 ? '-' : 'Fehlt';
+                    const note = r.note ? `(${r.note})` : '';
+                    return `${date}: ${status}${note}`;
+                }).join('; ');
+
+                return {
+                    "Name": nachname,
+                    "Vorname": vorname,
+                    "Durchschnitt": grade,
+                    "Anzahl Einträge": sRatings.length,
+                    "Übersicht": overview
+                };
+            });
+
+            // Calculate Class Average
+            if (sheetData.length > 0) {
+                const numericGrades = sheetData
+                    .map(d => parseFloat(d.Durchschnitt.replace(',', '.')))
+                    .filter(g => !isNaN(g));
+
+                if (numericGrades.length > 0) {
+                    const classAvg = (numericGrades.reduce((a, b) => a + b, 0) / numericGrades.length).toFixed(1).replace('.', ',');
+                    sheetData.push({
+                        "Name": "KLASSENDURCHSCHNITT",
+                        "Vorname": "",
+                        "Durchschnitt": classAvg,
+                        "Anzahl Einträge": "",
+                        "Übersicht": ""
+                    });
+                }
+            }
+
+            const ws = XLSX.utils.json_to_sheet(sheetData);
+
+            // Adjust column widths roughly
+            ws['!cols'] = [
+                { wch: 20 }, // Name
+                { wch: 20 }, // Vorname
+                { wch: 12 }, // Durch..
+                { wch: 15 }, // Anzahl
+                { wch: 100 } // Übersicht
+            ];
+
+            // Sanitize sheet name (Excel limit 31 chars, no special chars)
+            const safeName = cls.name.replace(/[\\/?*[\]]/g, "").substring(0, 31) || `Class ${cls.id}`;
+            XLSX.utils.book_append_sheet(wb, ws, safeName);
         });
 
-        const ws = XLSX.utils.json_to_sheet(exportData);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Leistung");
-        XLSX.writeFile(wb, "ClassSwipe_Bericht.xlsx");
+        if (wb.SheetNames.length === 0) {
+            alert("Keine Daten für den Export gefunden (keine Schüler in Klassen).");
+            return;
+        }
+
+        XLSX.writeFile(wb, "ClassSwipe_Bericht_Erweitert.xlsx");
     };
 
     return (
