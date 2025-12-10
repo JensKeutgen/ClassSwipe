@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+}
+
+html,
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: #f3f4f6;
+  /* gray-100 */
+  /* overflow: hidden; removed to allow scrolling within app containers */
+  touch-action: pan-x pan-y;
+  /* Allow default touch actions unless specifically disabled */
+}
