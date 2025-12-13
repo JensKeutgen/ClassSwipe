@@ -146,6 +146,26 @@ export const AppProvider = ({ children }) => {
     };
 
 
+    // Persist data to localStorage whenever it changes
+    useEffect(() => {
+        localStorage.setItem('cs_classes', JSON.stringify(classes));
+    }, [classes]);
+
+    useEffect(() => {
+        localStorage.setItem('cs_students', JSON.stringify(students));
+    }, [students]);
+
+    useEffect(() => {
+        localStorage.setItem('cs_schedule', JSON.stringify(schedule));
+    }, [schedule]);
+
+    useEffect(() => {
+        localStorage.setItem('cs_ratings', JSON.stringify(ratings));
+    }, [ratings]);
+
+    useEffect(() => {
+        localStorage.setItem('cs_sync_settings', JSON.stringify(syncSettings));
+    }, [syncSettings]);
 
     return (
         <AppContext.Provider value={{
