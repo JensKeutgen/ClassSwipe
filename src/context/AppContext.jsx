@@ -35,6 +35,12 @@ export const AppProvider = ({ children }) => {
         return saved ? JSON.parse(saved) : { backupUrl: '', restoreUrl: '' };
     });
 
+    // Active Sessions: { classId, currentIndex, lastUpdate, total }
+    const [activeSessions, setActiveSessions] = useState(() => {
+        const saved = localStorage.getItem('cs_sessions');
+        return saved ? JSON.parse(saved) : [];
+    });
+
     // Automatic Dark Mode (System Preference)
     useEffect(() => {
         const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -95,6 +101,21 @@ export const AppProvider = ({ children }) => {
 
     const addRating = (rating) => setRatings(prev => [...prev, rating]);
 
+    // Session Management
+    const updateSession = (classId, currentIndex, total) => {
+        setActiveSessions(prev => {
+            const existing = prev.find(s => s.classId === classId);
+            if (existing) {
+                return prev.map(s => s.classId === classId ? { ...s, currentIndex, lastUpdate: new Date().toISOString(), total } : s);
+            }
+            return [...prev, { classId, currentIndex, lastUpdate: new Date().toISOString(), total }];
+        });
+    };
+
+    const removeSession = (classId) => {
+        setActiveSessions(prev => prev.filter(s => s.classId !== classId));
+    };
+
     // Bulk import helper
     const importData = (newClasses, newStudents, newSchedule) => {
         setClasses(newClasses);
@@ -107,6 +128,7 @@ export const AppProvider = ({ children }) => {
         setStudents([]);
         setSchedule([]);
         setRatings([]);
+        setActiveSessions([]);
     };
 
     const getAllData = () => ({
@@ -167,11 +189,16 @@ export const AppProvider = ({ children }) => {
         localStorage.setItem('cs_sync_settings', JSON.stringify(syncSettings));
     }, [syncSettings]);
 
+    useEffect(() => {
+        localStorage.setItem('cs_sessions', JSON.stringify(activeSessions));
+    }, [activeSessions]);
+
     return (
         <AppContext.Provider value={{
-            classes, students, schedule, ratings, syncSettings,
+            classes, students, schedule, ratings, syncSettings, activeSessions,
             addClass, addStudent, updateStudent, deleteClass, deleteStudent, addRating, importData, clearData,
-            getAllData, restoreAllData, updateSyncSettings, backupData, restoreData
+            getAllData, restoreAllData, updateSyncSettings, backupData, restoreData,
+            updateSession, removeSession
         }}>
             {children}
         </AppContext.Provider>

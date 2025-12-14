@@ -1,15 +1,17 @@
 import React, { useState, useRef, forwardRef, useImperativeHandle } from 'react';
-import { motion, useMotionValue, useTransform, useAnimation, animate } from 'framer-motion';
+import { motion, useMotionValue, useTransform, useAnimation, animate, AnimatePresence } from 'framer-motion';
 import { Check, X, Minus, ArrowUp } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import GradeSlider from './GradeSlider';
 
-const SwipeCard = forwardRef(({ student, onSwipe, index, zIndex }, ref) => {
+const SwipeCard = forwardRef(({ student, onSwipe, onLongPress, index, zIndex }, ref) => {
     const x = useMotionValue(0);
     const y = useMotionValue(0);
     const controls = useAnimation();
+    const timerRef = useRef(null);
+    const isLongPress = useRef(false);
 
     const rotate = useTransform(x, [-200, 200], [-30, 30]);
-    // Opacity removed to prevent transparency issues
 
     // Background Color Transform
     const backgroundColor = useTransform(
@@ -47,7 +49,7 @@ const SwipeCard = forwardRef(({ student, onSwipe, index, zIndex }, ref) => {
     );
 
     useImperativeHandle(ref, () => ({
-        triggerSwipe: async (direction) => {
+        triggerSwipe: async (direction, grade = null) => {
             let targetX = 0;
             let targetY = 0;
 
@@ -62,11 +64,12 @@ const SwipeCard = forwardRef(({ student, onSwipe, index, zIndex }, ref) => {
             if (targetX !== 0) await animate(x, targetX, { duration: 0.5 });
             if (targetY !== 0) await animate(y, targetY, { duration: 0.5 });
 
-            onSwipe(direction, student);
+            onSwipe(direction, student, grade);
         }
     }));
 
     const handleDragEnd = async (event, info) => {
+        if (isLongPress.current) return;
         const threshold = 100;
         const { x: dragX, y: dragY } = info.offset;
 
@@ -95,8 +98,18 @@ const SwipeCard = forwardRef(({ student, onSwipe, index, zIndex }, ref) => {
             dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
             dragElastic={0.7}
             onDragEnd={handleDragEnd}
+            onDragStart={() => clearTimeout(timerRef.current)}
+            onPointerDown={() => {
+                isLongPress.current = false;
+                timerRef.current = setTimeout(() => {
+                    isLongPress.current = true;
+                    if (onLongPress) onLongPress(student);
+                }, 500);
+            }}
+            onPointerUp={() => clearTimeout(timerRef.current)}
+            onPointerLeave={() => clearTimeout(timerRef.current)}
             animate={controls}
-            style={{ x, y, rotate, backgroundColor: '#fff', zIndex }}
+            style={{ x, y, rotate, backgroundColor: '#fff', zIndex, touchAction: 'none' }}
             className={`absolute top-0 left-0 w-full h-full bg-white dark:bg-gray-800 rounded-3xl shadow-xl flex flex-col ${hasImage ? 'justify-end' : 'items-center justify-center'} p-6 border border-gray-100 dark:border-gray-700 cursor-grab active:cursor-grabbing overflow-hidden`}
         >
             {/* Color Overlay for All Modes */}
@@ -146,25 +159,105 @@ const SwipeCard = forwardRef(({ student, onSwipe, index, zIndex }, ref) => {
 });
 
 const SwipeInterface = ({ classId, onFinish }) => {
-    const { classes, students, addRating } = useApp();
-    const [currentIndex, setCurrentIndex] = useState(0);
+    const { classes, students, addRating, activeSessions, updateSession, removeSession } = useApp();
+
+    // Resume session if exists
+    const existingSession = activeSessions.find(s => s.classId === classId);
+    const [currentIndex, setCurrentIndex] = useState(existingSession ? existingSession.currentIndex : 0);
+
     const [selectedComments, setSelectedComments] = useState([]);
+    const [gradingState, setGradingState] = useState({ active: false, value: 1, studentId: null });
+    const sliderRef = useRef(null);
     const currentCardRef = useRef();
+    const lastProcessedId = useRef(null);
 
     const COMMENTS = ['Mündlich gut', 'Hausaufgaben fehlen', 'Material vergessen', 'Stört'];
 
     const currentClass = classes.find(c => c.id === classId);
     const classStudents = students.filter(s => currentClass?.studentIds.includes(s.id));
 
-    const handleSwipe = (direction, student) => {
+    // Handle Grade Slider Logic
+    const startGrading = (student) => {
+        setGradingState({ active: true, value: 3.5, studentId: student.id }); // Start at middle
+
+        // Add global listeners
+        window.addEventListener('pointermove', handleGradingMove);
+        window.addEventListener('pointerup', handleGradingEnd);
+        window.addEventListener('pointercancel', handleGradingEnd);
+    };
+
+    const handleGradingMove = (e) => {
+        // e.preventDefault(); // Prevent scrolling - removed as it can cause issues on passive/non-passive mix
+        // Better to use touch-action: none on the container
+
+        // Use rect if available, else fallback to bottom 40%
+        const clientY = e.clientY || e.touches?.[0]?.clientY;
+        let relativeY = 0;
+
+        if (sliderRef.current) {
+            const rect = sliderRef.current.getBoundingClientRect();
+            // relativeY 0 is top of slider (Grade 1), 1 is bottom (Grade 6)
+            relativeY = (clientY - rect.top) / rect.height;
+        } else {
+            // Fallback: Bottom 40% of screen approx
+            const height = window.innerHeight;
+            // padding bottom 96px (24 * 4) + some margin
+            const sliderHeight = height * 0.4;
+            const sliderTop = height - sliderHeight - 100; // approx
+            relativeY = (clientY - sliderTop) / sliderHeight;
+        }
+
+        relativeY = Math.max(0, Math.min(1, relativeY));
+
+        // Map 0-1 to 1-6
+        const grade = (relativeY * 5) + 1;
+
+        setGradingState(prev => ({ ...prev, value: grade }));
+    };
+
+    const handleGradingEnd = () => {
+        window.removeEventListener('pointermove', handleGradingMove);
+        window.removeEventListener('pointerup', handleGradingEnd);
+        window.removeEventListener('pointercancel', handleGradingEnd);
+
+        setGradingState(prev => {
+            if (prev.active && prev.studentId) {
+                const student = students.find(s => s.id === prev.studentId);
+                if (student) {
+                    submitGrade(student, prev.value);
+                }
+            }
+            return { active: false, value: 3.5, studentId: null };
+        });
+    };
+
+    const submitGrade = (student, grade) => {
+        handleSwipe('right', student, grade); // Dummy direction, grade takes precedence
+    };
+
+    const handleSwipe = (direction, student, preciseGrade = null) => {
+        // Prevent double-processing the same student (e.g. via drag + long-press race)
+        if (lastProcessedId.current === student.id) return;
+        lastProcessedId.current = student.id;
+
         let ratingValue = 0;
         let note = '';
 
-        switch (direction) {
-            case 'right': ratingValue = 3; note = 'Good'; break;
-            case 'left': ratingValue = 1; note = 'Bad'; break;
-            case 'up': ratingValue = 2; note = 'Average'; break;
-            case 'down': ratingValue = 0; note = 'Absent'; break;
+        if (preciseGrade) {
+            // Precise Grading Logic
+            note = `Note: ${preciseGrade.toFixed(1)}`;
+            if (preciseGrade <= 2) ratingValue = 3;
+            else if (preciseGrade <= 4) ratingValue = 2;
+            else ratingValue = 1;
+
+        } else {
+            // Standard Swipe Logic
+            switch (direction) {
+                case 'right': ratingValue = 3; note = 'Good'; break;
+                case 'left': ratingValue = 1; note = 'Bad'; break;
+                case 'up': ratingValue = 2; note = 'Average'; break;
+                case 'down': ratingValue = 0; note = 'Absent'; break;
+            }
         }
 
         if (selectedComments.length > 0) {
@@ -177,14 +270,21 @@ const SwipeInterface = ({ classId, onFinish }) => {
             classId: classId,
             date: new Date().toISOString(),
             rating: ratingValue,
+            grade: preciseGrade,
             note
         });
 
         setSelectedComments([]);
 
-        if (currentIndex < classStudents.length - 1) {
-            setCurrentIndex(prev => prev + 1);
+        // Remove dependency on currentIndex state by calculating index from student
+        const studentIndex = classStudents.findIndex(s => s.id === student.id);
+        const nextIndex = studentIndex + 1;
+
+        if (nextIndex < classStudents.length) {
+            setCurrentIndex(nextIndex);
+            updateSession(classId, nextIndex, classStudents.length);
         } else {
+            removeSession(classId); // Clean up session
             onFinish();
         }
     };
@@ -233,6 +333,7 @@ const SwipeInterface = ({ classId, onFinish }) => {
                         ref={student.id === classStudents[currentIndex].id ? currentCardRef : null}
                         student={student}
                         onSwipe={handleSwipe}
+                        onLongPress={startGrading}
                         index={index}
                         zIndex={index}
                     />
@@ -284,6 +385,15 @@ const SwipeInterface = ({ classId, onFinish }) => {
                     <span>Gut</span>
                 </button>
             </div>
+
+            <AnimatePresence>
+                {gradingState.active && (
+                    <GradeSlider
+                        ref={sliderRef}
+                        value={gradingState.value}
+                    />
+                )}
+            </AnimatePresence>
         </div>
     );
 };
